@@ -1164,35 +1164,45 @@ trigger_send_callback (udx_socket_t *socket, udx_packet_t *pkt) {
   }
 }
 
+
 static void
 on_uv_poll (uv_poll_t *handle, int status, int events) {
   udx_socket_t *socket = handle->data;
   ssize_t size;
 
   if (events & UV_READABLE) {
-    struct sockaddr_storage addr;
-    int addr_len = sizeof(addr);
-    uv_buf_t buf;
 
-    memset(&addr, 0, addr_len);
+    #define POLL_BATCH_SIZE 20
 
-    char b[2048];
-    buf.base = (char *) &b;
-    buf.len = 2048;
+    struct sockaddr_storage addr[POLL_BATCH_SIZE] = {0};
+    uv_buf_t                buf[POLL_BATCH_SIZE];
+    unsigned int            size[POLL_BATCH_SIZE];
+    char                    b[POLL_BATCH_SIZE][2048]; // 20k
 
-    while ((size = udx__recvmsg(socket, &buf, (struct sockaddr *) &addr, addr_len)) >= 0) {
-      if (!process_packet(socket, b, size, (struct sockaddr *) &addr) && socket->on_recv != NULL) {
-        buf.len = size;
+    int addrlen = sizeof(addr[0]);
+    //memset(addr, 0, addrlen*POLL_BATCH_SIZE);
 
-        if (is_addr_v4_mapped((struct sockaddr *) &addr)) {
-          addr_to_v4((struct sockaddr_in6 *) &addr);
-        }
-
-        socket->on_recv(socket, size, &buf, (struct sockaddr *) &addr);
-      }
-
-      buf.len = 2048;
+    for (int i = 0; i < POLL_BATCH_SIZE; i++) {
+      buf[i].base = (char *)&b[i];
+      buf[i].len = 2048;
     }
+
+    int rc;
+    while (rc = udx__recvmmsg(socket, buf, (struct sockaddr *) addr, addrlen, size, POLL_BATCH_SIZE) >= 0 ) {
+      for (int i = 0; i < rc; i++) {
+        if (!process_packet(socket, buf[i].base, size[i], (struct sockaddr *) &addr[i])) {
+          buf[i].len = size[i];
+
+          if (is_addr_v4_mapped((struct sockaddr *) &addr[i])) {
+            addr_to_v4((struct sockaddr_in6 *) &addr[i]);
+          }
+
+          socket->on_recv(socket, size[i], buf + i, (struct sockaddr *) &addr[i]);
+        }
+        buf[i].len = 2048;
+      }
+    }
+    #undef POLL_BATCH_SIZE
   }
 
   while (events & UV_WRITABLE && socket->send_queue.len > 0) {

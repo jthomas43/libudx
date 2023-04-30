@@ -21,6 +21,8 @@ struct {
 } options;
 
 struct {
+    //uint64_t bytes_sent;
+    //uint64_t last_bytes_sent;
     uint64_t bytes_read;
     uint64_t last_bytes_read;
 
@@ -130,6 +132,8 @@ main () {
 
     e = uv_run(&loop, UV_RUN_DEFAULT);
     assert(e == 0 && "UV_RUN");
+
+    printf("bytes_read=%ld\n", stats.bytes_read);
 
     uv_loop_close(&loop);
 

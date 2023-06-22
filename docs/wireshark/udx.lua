@@ -8,6 +8,8 @@ udx.fields.type_end      = ProtoField.bool("udx.type.end", "End", 8, nil, 0x2)
 udx.fields.type_sack     = ProtoField.bool("udx.type.sack", "SACK", 8, nil, 0x4)
 udx.fields.type_message  = ProtoField.bool("udx.type.message", "Message", 8, nil, 0x8)
 udx.fields.type_destroy  = ProtoField.bool("udx.type.destroy", "Destroy", 8, nil, 0x10)
+udx.fields.type_mtuprobe = ProtoField.bool("udx.type.destroy", "MTU Probe", 8, nil, 0x20)
+udx.fields.type_mtuack   = ProtoField.bool("udx.type.destroy", "MTU Ack", 8, nil, 0x40)
 udx.fields.data_offset   = ProtoField.uint8("udx.data_offset", "Data Offset", base.DEC)
 udx.fields.length        = ProtoField.uint32("udx.length", "Length", base.DEC)
 
@@ -24,15 +26,20 @@ local TYPE_END = 2
 local TYPE_SACK = 4
 local TYPE_MSG = 8
 local TYPE_DESTROY = 16
+local TYPE_MTU_PROBE = 32
+local TYPE_MTU_ACK = 64
 
 local function get_type_names(type)
-        local txt = "ACK,"
+        local txt = ""
+        if type < TYPE_MTU_PROBE then txt = "ACK," end
 
         if bit.band(type, TYPE_DATA) > 0 then txt = txt .. "DATA," end
         if bit.band(type, TYPE_END) > 0 then txt = txt .. "END," end
         if bit.band(type, TYPE_SACK) > 0 then txt = txt .. "SACK," end
         if bit.band(type, TYPE_MSG) > 0 then txt = txt .. "MSG," end
         if bit.band(type, TYPE_DESTROY) > 0 then txt = txt .. "DESTROY," end
+        if bit.band(type, TYPE_MTU_PROBE) > 0 then txt = txt .. "MTU PROBE," end
+        if bit.band(type, TYPE_MTU_ACK) > 0 then txt = txt .. "MTU ACK," end
 
         return txt:sub(1,-2)
 end
@@ -55,6 +62,8 @@ function udx.dissector(tvb, pinfo, tree)
     subtree:add(udx.fields.type_sack, tvb(2,1))
     subtree:add(udx.fields.type_message, tvb(2,1))
     subtree:add(udx.fields.type_destroy, tvb(2,1))
+    subtree:add(udx.fields.type_mtuprobe, tvb(2,1))
+    subtree:add(udx.fields.type_mtuack, tvb(2,1))
     subtree:add(udx.fields.data_offset, tvb(3,1))
 
     subtree:add_le(udx.fields.id, tvb(4,4))
@@ -113,7 +122,7 @@ local function heuristic_checker(tvb, pinfo, tree)
 
     local flags = tvb(2,1):uint()
 
-    if flags >= 32 then
+    if flags >= 128 then
         return false
     end
 

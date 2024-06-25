@@ -1136,7 +1136,7 @@ udx_tlp_timeout (uv_timer_t *timer) {
     return;
   }
 
-  stream->write_wanted |= UDX_STREAM_WRITE_WANT_TLP;
+  // stream->write_wanted |= UDX_STREAM_WRITE_WANT_TLP;
   update_poll(stream->socket);
 }
 

@@ -31,9 +31,16 @@
 
 #define UDX_HEADER_DATA_OR_END (UDX_HEADER_DATA | UDX_HEADER_END)
 
-#define UDX_DEFAULT_TTL                  64
-#define UDX_DEFAULT_BUFFER_SIZE          212992
-#define UDX_PACING_BYTES_PER_MILLISECOND 25000 // 25MB/s, 200mbit
+#define UDX_DEFAULT_TTL             64
+#define UDX_DEFAULT_BUFFER_SIZE     212992
+#define UDX_PACING_BYTES_PER_SECOND 25000000 // 25MB/s, 200mbit
+// on windows we may frequently sleep for ~16ms when set a timer for 1ms
+// probably due to timer coalescing. This means we have to decide what to do
+// when we sleep for pacing for 1ms and wake up after 16ms. we can either
+// 1. send 16ms (~400kb) of data and maintain average throughput but occasionally
+// send spikes of data, or
+// 2. send 1ms (25kb) of data and suffer much lower throughput but without bursts
+#define UDX_PACING_TB_MAX (400 * 1024) // 400kb maximum
 
 #define UDX_MAX_RTO_TIMEOUTS 6
 
@@ -1566,12 +1573,12 @@ update_pacing_time (udx_stream_t *stream) {
 
   if (now_ns > stream->tb_last_refill_ns) {
     uint64_t elapsed_ns = now_ns - stream->tb_last_refill_ns;
-    uint64_t bytes_refilled = UDX_PACING_BYTES_PER_MILLISECOND * elapsed_ns / 1e6;
+    uint64_t bytes_refilled = UDX_PACING_BYTES_PER_SECOND * elapsed_ns / 1000000000;
     debug_printf("elapsed_ns=%ld bytes_refilled=%ld\n", elapsed_ns, bytes_refilled);
 
     stream->tb_available += bytes_refilled;
-    if (stream->tb_available > UDX_PACING_BYTES_PER_MILLISECOND) {
-      stream->tb_available = UDX_PACING_BYTES_PER_MILLISECOND;
+    if (stream->tb_available > UDX_PACING_TB_MAX) {
+      stream->tb_available = UDX_PACING_TB_MAX;
     }
     stream->tb_last_refill_ns = now_ns;
   }
@@ -2130,7 +2137,9 @@ udx_socket_init (udx_t *udx, udx_socket_t *socket, udx_socket_close_cb cb) {
   // but that would mean needing to add a destroy call to udx_t which would change the way it is used by users:
   // right now things close automatically for them when the last stream / socket is closed.
   // for testing, it is easier to hack it in here.
-  assert(uv_prepare_init(udx->loop, &socket->prepare) == 0);
+  err = uv_prepare_init(udx->loop, &socket->prepare);
+  assert(err == 0);
+
   socket->prepare.data = socket;
   uv_prepare_start(&socket->prepare, update_socket_time);
 
@@ -2427,7 +2436,7 @@ udx_stream_init (udx_t *udx, udx_stream_t *stream, uint32_t local_id, udx_stream
   stream->rack_next_seq = 0;
   stream->rack_fack = 0;
 
-  stream->tb_available = UDX_PACING_BYTES_PER_MILLISECOND;
+  stream->tb_available = UDX_PACING_TB_MAX;
   stream->tb_last_refill_ns = udx->now_ns;
 
   stream->tlp_in_flight = false;

@@ -132,6 +132,8 @@ struct udx_s {
   uint64_t packets_rx;
   uint64_t packets_tx;
 
+  uint64_t now_ns;
+
   int64_t packets_dropped_by_kernel;
 };
 
@@ -148,6 +150,7 @@ typedef struct udx_queue_s {
 struct udx_socket_s {
   uv_udp_t handle;
   uv_poll_t io_poll;
+  uv_prepare_t prepare;
 
   udx_queue_t send_queue;
 
@@ -273,7 +276,7 @@ struct udx_stream_s {
 
   // pacing (tb = token bucket)
   uint32_t tb_available;
-  uint64_t tb_last_refill_ms;
+  uint64_t tb_last_refill_ns;
 
   // tlp
   bool tlp_is_retrans;  // the probe in-flight was a retransmission

@@ -1560,11 +1560,20 @@ send_datagrams (udx_socket_t *socket) {
 
 static void
 update_pacing_time (udx_stream_t *stream) {
-  uint64_t now = uv_now(stream->udx->loop); // 1ms granularity
+  // uint64_t now = uv_now(stream->udx->loop); // 1ms granularity
 
-  if (now > stream->tb_last_refill_ms) {
-    stream->tb_available = UDX_PACING_BYTES_PER_MILLISECOND;
-    stream->tb_last_refill_ms = now;
+  uint64_t now_ns = stream->udx->now_ns;
+
+  if (now_ns > stream->tb_last_refill_ns) {
+    uint64_t elapsed_ns = now_ns - stream->tb_last_refill_ns;
+    uint64_t bytes_refilled = UDX_PACING_BYTES_PER_MILLISECOND * elapsed_ns / 1e6;
+    debug_printf("elapsed_ns=%ld bytes_refilled=%ld\n", elapsed_ns, bytes_refilled);
+
+    stream->tb_available += bytes_refilled;
+    if (stream->tb_available > UDX_PACING_BYTES_PER_MILLISECOND) {
+      stream->tb_available = UDX_PACING_BYTES_PER_MILLISECOND;
+    }
+    stream->tb_last_refill_ns = now_ns;
   }
 }
 
@@ -2026,6 +2035,7 @@ udx_init (uv_loop_t *loop, udx_t *udx, udx_idle_cb on_idle) {
 
   udx->packets_dropped_by_kernel = -1;
   udx->loop = loop;
+  udx->now_ns = uv_hrtime();
 
   udx->debug_flags = 0;
 
@@ -2070,6 +2080,14 @@ udx_teardown (udx_t *udx) {
   }
 }
 
+static void
+update_socket_time (uv_prepare_t *prepare) {
+  debug_printf("hello from update_socket_time\n");
+  udx_socket_t *socket = prepare->data;
+  assert(socket);
+  socket->udx->now_ns = uv_hrtime();
+}
+
 int
 udx_socket_init (udx_t *udx, udx_socket_t *socket, udx_socket_close_cb cb) {
   if (udx->teardown) return UV_EINVAL;
@@ -2107,6 +2125,14 @@ udx_socket_init (udx_t *udx, udx_socket_t *socket, udx_socket_close_cb cb) {
 
   int err = uv_udp_init(udx->loop, handle);
   assert(err == 0);
+
+  // it makes more sense to put the prepare handle on the udx object or make it a global object
+  // but that would mean needing to add a destroy call to udx_t which would change the way it is used by users:
+  // right now things close automatically for them when the last stream / socket is closed.
+  // for testing, it is easier to hack it in here.
+  assert(uv_prepare_init(udx->loop, &socket->prepare) == 0);
+  socket->prepare.data = socket;
+  uv_prepare_start(&socket->prepare, update_socket_time);
 
   handle->data = socket;
 
@@ -2305,6 +2331,7 @@ udx_socket_close (udx_socket_t *socket) {
   if (socket->streams != NULL) return UV_EBUSY;
 
   socket->status |= UDX_SOCKET_CLOSED;
+  socket->pending_closes = 2;
 
   while (socket->send_queue.len > 0) {
     udx_packet_t *pkt = udx__queue_data(udx__queue_shift(&socket->send_queue), udx_packet_t, queue);
@@ -2323,7 +2350,9 @@ udx_socket_close (udx_socket_t *socket) {
     uv_close((uv_handle_t *) &(socket->io_poll), on_uv_close);
   }
 
-  socket->pending_closes++;
+  uv_prepare_stop(&socket->prepare);
+  uv_close((uv_handle_t *) &socket->prepare, on_uv_close);
+
   uv_close((uv_handle_t *) &(socket->handle), on_uv_close);
 
   udx_t *udx = socket->udx;
@@ -2399,7 +2428,7 @@ udx_stream_init (udx_t *udx, udx_stream_t *stream, uint32_t local_id, udx_stream
   stream->rack_fack = 0;
 
   stream->tb_available = UDX_PACING_BYTES_PER_MILLISECOND;
-  stream->tb_last_refill_ms = uv_now(udx->loop);
+  stream->tb_last_refill_ns = udx->now_ns;
 
   stream->tlp_in_flight = false;
   stream->tlp_end_seq = 0;

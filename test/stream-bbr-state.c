@@ -123,7 +123,7 @@ send_periodic (uv_timer_t *timer) {
   };
 
   if (prev_state != state) {
-    printf("test 2 stream-bbr-state: driver state changed from %s -> %s\n", state_names[prev_state], state_names[state]);
+    printf("test stream-bbr-state: driver state changed from %s -> %s\n", state_names[prev_state], state_names[state]);
 
     if (state == STATE_HIGH_BW) {
       // transitioned into high bw

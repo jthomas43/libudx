@@ -49,6 +49,8 @@ udx_stream_t recv_stream;
 struct sockaddr_in send_addr;
 struct sockaddr_in recv_addr;
 
+static int sockets_closed = 0;
+
 #define STATE_LOW_BW   1
 #define STATE_HIGH_BW  2
 #define STATE_FINISHED 3
@@ -174,6 +176,11 @@ recv_read (udx_stream_t *recv, ssize_t read_len, const uv_buf_t *buf) {
 static void
 sock_close (udx_socket_t *sock) {
   printf("sock close\n");
+  sockets_closed++;
+  if (sockets_closed == 2) {
+    // Both sockets closed, safe to exit
+    uv_stop(&loop);
+  }
 }
 
 static void

@@ -151,9 +151,11 @@ send_periodic (uv_timer_t *timer) {
   printf("bbr.state=%s\n", bbr_state_name[send_stream.bbr.state]);
 
   if (state == STATE_FINISHED) {
+    printf("STATE_FINISHED: destroying streams and stopping timer\n");
     udx_stream_destroy(&send_stream);
     udx_stream_destroy(&recv_stream);
     uv_timer_stop(timer);
+    printf("Cleanup initiated, waiting for callbacks...\n");
   }
 }
 
@@ -175,23 +177,29 @@ recv_read (udx_stream_t *recv, ssize_t read_len, const uv_buf_t *buf) {
 // other callbacks
 static void
 sock_close (udx_socket_t *sock) {
-  printf("sock close\n");
+  printf("sock close (sockets_closed=%d)\n", sockets_closed + 1);
   sockets_closed++;
   if (sockets_closed == 2) {
-    // Both sockets closed, safe to exit
+    printf("Both sockets closed, stopping event loop\n");
     uv_stop(&loop);
   }
 }
 
 static void
 send_stream_close (udx_stream_t *stream, int status) {
+  printf("send_stream_close called with status=%d\n", status);
   assert(stream == &send_stream);
-  assert(udx_socket_close(&send_sock) == 0);
+  int rc = udx_socket_close(&send_sock);
+  printf("udx_socket_close(&send_sock) returned %d\n", rc);
+  assert(rc == 0);
 }
 static void
 recv_stream_close (udx_stream_t *stream, int status) {
+  printf("recv_stream_close called with status=%d\n", status);
   assert(stream == &recv_stream);
-  assert(udx_socket_close(&recv_sock) == 0);
+  int rc = udx_socket_close(&recv_sock);
+  printf("udx_socket_close(&recv_sock) returned %d\n", rc);
+  assert(rc == 0);
 }
 
 int

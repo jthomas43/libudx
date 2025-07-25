@@ -188,6 +188,7 @@ int nclosed;
 
 static void
 stream_close (udx_stream_t *stream, int status) {
+  printf("test: stream-bbr-state: in stream_close for %s stream\n", stream == &send_stream ? "send" : "recv");
   nclosed++;
   if (nclosed == 2) {
     assert(udx_socket_close(&send_sock) == 0);

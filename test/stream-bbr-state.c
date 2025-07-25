@@ -59,10 +59,10 @@ struct sockaddr_in recv_addr;
 // then  5 seconds sending at maximum throughput
 
 int states[][2] = {
-  {5000, STATE_LOW_BW}, /* { duration, state } */
-  {5000, STATE_HIGH_BW},
-  {5000, STATE_LOW_BW},
-  {5000, STATE_HIGH_BW}
+  {1000, STATE_LOW_BW}, /* { duration, state } */
+  {1000, STATE_HIGH_BW},
+  {1000, STATE_LOW_BW},
+  {1000, STATE_HIGH_BW}
   // conceptually state[4] = { infinity, STATE_FINISHED }
 };
 

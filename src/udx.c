@@ -1479,7 +1479,6 @@ detect_loss_repaired_by_loss_probe (udx_stream_t *stream, uint32_t ack) {
     if (!stream->tlp_is_retrans) {
       stream->tlp_in_flight = false;
     } else if (seq_compare(ack, stream->tlp_end_seq) > 0) {
-      debug_printf("tlp: loss probe retransmission masked lost packet, invoking congestion control\n");
       stream->tlp_in_flight = false;
     }
   }

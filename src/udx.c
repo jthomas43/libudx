@@ -495,6 +495,8 @@ send_probe (udx_stream_t *stream) {
 
   udx_write_header(header, stream, UDX_HEADER_HEARTBEAT);
 
+  assert(sizeof(header) == 20);
+
   // fast path
   uv_buf_t buf = uv_buf_init((char *) header, sizeof(header));
   int err = uv_udp_try_send(&stream->socket->uv_udp, &buf, 1, (struct sockaddr *) &stream->remote_addr);
@@ -611,6 +613,8 @@ send_ack (udx_stream_t *stream) {
   udx_write_header(pkt.header, stream, nsacks > 0 ? UDX_HEADER_SACK : 0);
   // fast path
 
+  assert(sizeof(pkt.header) == 20 && sizeof(pkt.sacks[0]) == 8 && nsacks >= 0);
+
   uv_buf_t buf = uv_buf_init((char *) &pkt, sizeof(pkt.header) + sizeof(pkt.sacks[0]) * nsacks);
   int err = uv_udp_try_send(&stream->socket->uv_udp, &buf, 1, (struct sockaddr *) &stream->remote_addr);
 
@@ -637,19 +641,13 @@ send_ack (udx_stream_t *stream) {
   stream->udx->packets_tx++;
   stream->udx->bytes_tx += buf.len;
 
-  // test: do we really need to defer reading EOF until after sending the ACK?
   if ((stream->status & UDX_STREAM_SHOULD_END_REMOTE) == UDX_STREAM_END_REMOTE && seq_compare(stream->remote_ended, stream->ack) <= 0) {
     stream->status |= UDX_STREAM_ENDED_REMOTE;
-    if (stream->on_read != NULL) {
-      uv_buf_t b = uv_buf_init(NULL, 0);
-      stream->on_read(stream, UV_EOF, &b);
+    if ((stream->status & UDX_STREAM_ALL_ENDED) == UDX_STREAM_ALL_ENDED) {
+      assert(stream->retransmit_queue.len == 0);
+      assert(stream->write_queue.len == 0);
+      close_stream(stream, 0);
     }
-  }
-
-  if ((stream->status & UDX_STREAM_ALL_ENDED) == UDX_STREAM_ALL_ENDED) {
-    assert(stream->retransmit_queue.len == 0);
-    assert(stream->write_queue.len == 0);
-    close_stream(stream, 0);
   }
 }
 
@@ -1334,13 +1332,22 @@ ack_packet (udx_stream_t *stream, uint32_t seq, int sack, udx_rate_sample_t *rs)
 
 static void
 process_data_packet (udx_stream_t *stream, int type, uint32_t seq, char *data, ssize_t data_len) {
-  if (seq == stream->ack && type & UDX_HEADER_DATA) {
+  if (seq == stream->ack && (type & UDX_HEADER_DATA_OR_END)) {
     // Fast path - next in line, no need to memcpy it, stack allocate the struct and call on_read...
     stream->ack++;
 
-    if (stream->on_read != NULL) {
-      uv_buf_t buf = uv_buf_init(data, data_len);
-      stream->on_read(stream, data_len, &buf);
+    if (type & UDX_HEADER_DATA) {
+      if (stream->on_read != NULL) {
+        uv_buf_t buf = uv_buf_init(data, data_len);
+        stream->on_read(stream, data_len, &buf);
+        if (stream->status & UDX_STREAM_DEAD) return;
+      }
+    }
+    if (type & UDX_HEADER_END) {
+      if (stream->on_read != NULL) {
+        uv_buf_t buf = uv_buf_init(NULL, 0);
+        stream->on_read(stream, UV_EOF, &buf);
+      }
     }
     return;
   }
@@ -1558,15 +1565,24 @@ process_packet (udx_socket_t *socket, char *buf, ssize_t buf_len, struct sockadd
     stream->pkts_buffered--;
     stream->ack++;
 
-    if ((pkt->type & UDX_HEADER_DATA) && stream->on_read != NULL) {
-      stream->on_read(stream, pkt->buf.len, &(pkt->buf));
-      if (stream->status & UDX_STREAM_DEAD) {
-        free(pkt);
-        return 1;
+    if ((pkt->type & UDX_HEADER_DATA_OR_END) && stream->on_read != NULL) {
+      if (pkt->type & UDX_HEADER_DATA) {
+        stream->on_read(stream, pkt->buf.len, &pkt->buf);
+        if (stream->status & UDX_STREAM_DEAD) {
+          free(pkt);
+          return 1;
+        }
       }
+      if (pkt->type & UDX_HEADER_END) {
+        uv_buf_t b = uv_buf_init(NULL, 0);
+        stream->on_read(stream, UV_EOF, &b);
+        if (stream->status & UDX_STREAM_DEAD) {
+          free(pkt);
+          return 1;
+        }
+      }
+      free(pkt);
     }
-
-    free(pkt);
   }
 
   // Check if the ack is oob.

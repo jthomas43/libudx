@@ -44,6 +44,7 @@ rbtree_left_rotate (udx_sack_block_t **root, udx_sack_block_t *sentinel, udx_sac
 
   if (node == *root) {
     *root = temp;
+    temp->parent = NULL; // keep root->parent NULL for debugging
   } else if (node == node->parent->left) {
     node->parent->left = temp;
   } else {
@@ -69,10 +70,9 @@ rbtree_right_rotate (udx_sack_block_t **root, udx_sack_block_t *sentinel, udx_sa
 
   if (node == *root) {
     *root = temp;
-
+    temp->parent = NULL; // keep root->parent NULL for debugging
   } else if (node == node->parent->right) {
     node->parent->right = temp;
-
   } else {
     node->parent->left = temp;
   }
@@ -87,6 +87,7 @@ udx_sack_tree_init (udx_sack_tree_t *tree) {
   tree->sentinel = &tree->_sentinel;
   rbt_black(tree->sentinel);
   tree->root = tree->sentinel;
+  tree->root->parent = NULL; // keep root->parent NULL to simplify debugging
 }
 
 static void
@@ -210,6 +211,7 @@ udx_sack_tree_remove (udx_sack_tree_t *tree, udx_sack_block_t *block) {
     rbt_black(temp);
 
     /* DEBUG stuff */
+    temp->parent = NULL;
     block->left = NULL;
     block->right = NULL;
     block->parent = NULL;

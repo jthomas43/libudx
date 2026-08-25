@@ -35,6 +35,7 @@ main () {
   int i = 0;
   for (i = 0; i < 10; i++) {
     udx_sack_tree_insert(&tree, block + i);
+    assert(tree.root->parent == NULL);
   }
 
   int middle_sack_block_start = tree.root->start;
@@ -61,6 +62,7 @@ main () {
     assert(min->start == block[i].start && min->end == block[i].end);
 
     udx_sack_tree_remove(&tree, min);
+    assert(tree.root->parent == NULL);
   }
 
   assert(tree.root == tree.sentinel);
@@ -76,6 +78,7 @@ main () {
     block[i].start += offset;
     block[i].end += offset;
     udx_sack_tree_insert(&tree, block + i);
+    assert(tree.root->parent == NULL);
   }
 
   i = 0;
@@ -96,6 +99,7 @@ main () {
     assert(min->start == block[i].start && min->end == block[i].end);
 
     udx_sack_tree_remove(&tree, min);
+    assert(tree.root->parent == NULL);
   }
   assert(tree.root == tree.sentinel);
 

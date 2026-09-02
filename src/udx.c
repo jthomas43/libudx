@@ -1125,6 +1125,7 @@ rack_detect_loss (udx_stream_t *stream) {
 
     // recover until the full window is acked
     stream->ca_state = UDX_CA_RECOVERY;
+    bbr_save_cwnd(stream);
     stream->high_seq = stream->seq;
     // rack 7.1 TLP_init
     stream->tlp_in_flight = false;

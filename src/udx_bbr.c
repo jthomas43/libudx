@@ -243,6 +243,7 @@ bbr_set_cwnd (udx_stream_t *stream, udx_rate_sample_t *rs, uint32_t acked, doubl
   cwnd = max_uint32(cwnd, bbr_cwnd_min_target);
 done:
   stream->cwnd = cwnd;
+  assert(stream->cwnd > 0);
   if (stream->bbr.state == UDX_BBR_STATE_PROBE_RTT) {
     stream->cwnd = min_uint32(stream->cwnd, bbr_cwnd_min_target);
   }

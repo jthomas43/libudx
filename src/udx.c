@@ -664,6 +664,7 @@ send_ack (udx_stream_t *stream) {
 
 static bool
 stream_may_send (udx_stream_t *stream, bool retransmit) {
+  assert(stream->cwnd > 0);
   update_pacing_time(stream);
   if (stream->tb_available == 0) {
     return false;

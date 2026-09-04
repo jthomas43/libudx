@@ -379,7 +379,6 @@ struct udx_stream_s {
 
   uint32_t sacks;
   uint32_t cwnd;          // packets
-  uint32_t ssthresh;      // packets
   uint32_t send_rwnd;     // remote advertised rwnd
   uint32_t recv_rwnd_max; // default: UDX_DEFAULT_RWND_MAX
 

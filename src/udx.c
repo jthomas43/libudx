@@ -664,6 +664,7 @@ send_ack (udx_stream_t *stream) {
 
 static bool
 stream_may_send (udx_stream_t *stream, bool retransmit) {
+  assert(stream->cwnd > 0);
   update_pacing_time(stream);
   if (stream->tb_available == 0) {
     return false;
@@ -1125,6 +1126,7 @@ rack_detect_loss (udx_stream_t *stream) {
 
     // recover until the full window is acked
     stream->ca_state = UDX_CA_RECOVERY;
+    bbr_save_cwnd(stream);
     stream->high_seq = stream->seq;
     // rack 7.1 TLP_init
     stream->tlp_in_flight = false;
@@ -1185,6 +1187,13 @@ udx_rto_timeout (uv_timer_t *timer) {
   assert(stream->status & UDX_STREAM_CONNECTED);
   assert(stream->remote_acked != stream->seq);
 
+  // save bbr->prior_cwnd before entering loss so that it can be restored after exiting loss.
+  // internally bbr_save_cwnd will only lower the saved cwnd if it has not already been lowered
+  // by previous loss or being in the PROBE_RTT phase.
+  // bbr_save_cwnd() _may_ increase the saved cwnd if the current cwnd is higher, in
+  // this case the higher cwnd is justified by delivered packets.
+  bbr_save_cwnd(stream);
+
   // exit fast recovery if we are in it
   stream->high_seq = stream->seq;
   stream->rto_count++;
@@ -1240,6 +1249,8 @@ udx_rto_timeout (uv_timer_t *timer) {
       stream->inflight -= pkt->size;
     }
   }
+
+  stream->cwnd = stream->inflight_queue.len + 1;
 
   bbr_on_rto(stream);
   send_packets(stream);
@@ -1663,9 +1674,6 @@ process_packet (udx_socket_t *socket, char *buf, ssize_t buf_len, struct sockadd
   }
 
   if (seq_compare(ack, stream->high_seq) > 0 && (stream->ca_state == UDX_CA_RECOVERY || stream->ca_state == UDX_CA_LOSS)) {
-    if (stream->ca_state == UDX_CA_RECOVERY) {
-      stream->cwnd = stream->ssthresh;
-    }
     stream->ca_state = UDX_CA_OPEN;
   }
 
@@ -2332,7 +2340,6 @@ udx_stream_init (udx_t *udx, udx_stream_t *stream, uint32_t local_id, udx_stream
   udx__queue_init(&stream->retransmit_queue);
   udx__queue_init(&stream->write_queue);
 
-  stream->ssthresh = 0xffff;
   stream->cwnd = 10;
   stream->recv_rwnd_max = UDX_DEFAULT_RWND_MAX;
   stream->send_rwnd = UDX_DEFAULT_RWND_MAX;

@@ -296,7 +296,7 @@ struct udx_stream_s {
   uint8_t pending_acks;
   udx_packet_t *pkt; // in construction packet or NULL
   uv_prepare_t pending_packet_prepare;
-  uv_check_t delayed_ack_check;
+  uv_prepare_t delayed_ack_prepare;
 
   // true if data received before we were connected, in this
   // situation we must send an ack to the data after we are connected

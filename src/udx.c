@@ -1884,7 +1884,7 @@ process_packet (udx_socket_t *socket, char *buf, ssize_t buf_len, struct sockadd
   }
 
   if (type & UDX_HEADER_DATA_OR_END) {
-    if (stream->pending_acks >= UDX_MAX_PENDING_ACKS || type & UDX_HEADER_END) {
+    if (stream->pending_acks >= UDX_MAX_PENDING_ACKS || stream->status & UDX_STREAM_ENDING_REMOTE) {
       send_ack(stream);
       if (stream->status & UDX_STREAM_DEAD) {
         return 1;

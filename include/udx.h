@@ -156,6 +156,9 @@ struct udx_s {
   int refs;
   bool teardown;
 
+  uint32_t timer_resolution_holds; // streams currently pacing (see udx__timer_resolution_begin)
+  bool timer_resolution_raised;
+
   udx_idle_cb on_idle;
 
   udx_socket_t *sockets;
@@ -410,6 +413,8 @@ struct udx_stream_s {
   uint64_t last_send_ts;        // last time a paced packet was sent. used to recompute next_send_ts
   double last_send_ts_fraction; // [0.0-1.0). used to recompute next_send_ts
   double pacing_packets_per_ms; // only used to compute interpacket spacing (ie 1/pacing_packets_per_ms)
+  bool pacing_wait;             // stopped on a future pacing deadline with work queued and the window open; only then is old credit kept
+  bool timer_resolution_held;   // counted in udx->timer_resolution_holds
 
   // tlp
   bool tlp_is_retrans;  // the probe in-flight was a retransmission

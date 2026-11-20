@@ -1,6 +1,7 @@
 list(APPEND tests
   lookup
   lookup-invalid
+  lookup-sync-error
   lookup-ipv6
   sack
   socket-send-recv
@@ -44,6 +45,7 @@ list(APPEND tests
   stream-timewait
   stream-timewait-replace-by-new-stream-id
   stream-timewait-ooo-end
+  stream-pacing-timer-resolution
 )
 
 list(APPEND skipped_tests

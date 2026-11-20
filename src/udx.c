@@ -122,7 +122,7 @@ send_window_in_packets (udx_stream_t *stream) {
 
 static void
 ref_inc (udx_t *udx) {
-  if (udx->refs++ == 0) udx__platform_init(udx);
+  udx->refs++;
 }
 
 static void
@@ -130,8 +130,6 @@ ref_dec (udx_t *udx) {
   udx->refs--;
 
   if (udx->refs) return;
-
-  udx__platform_uninit(udx);
 
   if (udx->on_idle != NULL) {
     udx->on_idle(udx);
@@ -414,6 +412,9 @@ stream_timer_stop (udx_stream_t *stream) {
 static void
 close_stream_internal (udx_stream_t *stream, int err);
 
+static void
+timer_resolution_release (udx_stream_t *stream);
+
 void
 close_stream (udx_stream_t *stream, int err) {
   if (err) {
@@ -515,6 +516,7 @@ close_stream_internal (udx_stream_t *stream, int err) {
 
   uv_timer_stop(&stream->timer);
   uv_timer_stop(&stream->pacing_timer);
+  timer_resolution_release(stream);
 
   uv_close((uv_handle_t *) &stream->timer, finalize_maybe);
   uv_close((uv_handle_t *) &stream->pacing_timer, finalize_maybe);
@@ -756,6 +758,35 @@ pacer_resume (udx_stream_t *stream) {
   }
 }
 
+// hold 1 ms timer resolution from the first pacing wait until nothing is in
+// flight or the stream closes. this avoids toggling a system-wide setting at
+// ack rate as the stop reason alternates between pacing and a full window.
+static void
+timer_resolution_hold (udx_stream_t *stream) {
+  if (stream->timer_resolution_held) return;
+  stream->timer_resolution_held = true;
+
+  udx_t *udx = stream->udx;
+  if (udx->timer_resolution_holds++ == 0) {
+    udx->timer_resolution_raised = udx__timer_resolution_begin();
+  }
+}
+
+// only a successful request is paired with an end call when the final stream
+// releases its hold.
+static void
+timer_resolution_release (udx_stream_t *stream) {
+  if (!stream->timer_resolution_held) return;
+  stream->timer_resolution_held = false;
+
+  udx_t *udx = stream->udx;
+  assert(udx->timer_resolution_holds > 0);
+  if (--udx->timer_resolution_holds == 0 && udx->timer_resolution_raised) {
+    udx__timer_resolution_end();
+    udx->timer_resolution_raised = false;
+  }
+}
+
 // classify why sending stopped; arm pacing only for queued work with the window open and a future deadline
 static void
 pacer_after_send (udx_stream_t *stream) {
@@ -774,11 +805,15 @@ pacer_after_send (udx_stream_t *stream) {
 
   if (work && !window_full && stream->next_send_ts > now) {
     stream->pacing_wait = true;
+    timer_resolution_hold(stream);
     uv_timer_start(&stream->pacing_timer, pacing_timer_timeout, stream->next_send_ts - now, 0);
   } else {
     stream->pacing_wait = false;
     uv_timer_stop(&stream->pacing_timer);
     pacer_resume(stream);
+    // release once nothing is in flight: idle, or a zero window with data queued. with packets
+    // in flight the stream may pace again after the next ack, so it keeps the hold
+    if (stream->inflight_queue.len == 0) timer_resolution_release(stream);
   }
 }
 
@@ -3053,8 +3088,6 @@ int
 udx_lookup (udx_t *udx, udx_lookup_t *req, const char *host, unsigned int flags, udx_lookup_cb cb) {
   if (udx->teardown) return UV_EINVAL;
 
-  ref_inc(udx);
-
   req->udx = udx;
   req->on_lookup = cb;
   req->req.data = req;
@@ -3069,7 +3102,12 @@ udx_lookup (udx_t *udx, udx_lookup_t *req, const char *host, unsigned int flags,
   req->hints.ai_family = family;
   req->hints.ai_socktype = SOCK_STREAM;
 
-  return uv_getaddrinfo(udx->loop, &req->req, on_uv_getaddrinfo, host, NULL, &req->hints);
+  int err = uv_getaddrinfo(udx->loop, &req->req, on_uv_getaddrinfo, host, NULL, &req->hints);
+  // synchronous failures do not invoke the callback, so take the matching ref
+  // only after the asynchronous request has started successfully.
+  if (err == 0) ref_inc(udx);
+
+  return err;
 }
 
 static int

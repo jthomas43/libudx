@@ -108,12 +108,11 @@ udx__udp_set_dontfrag (uv_os_sock_t fd, bool is_ipv6) {
 
 const uint64_t udx__pacing_max_credit_ms = 1;
 
-void
-udx__platform_init (udx_t *udx) {
-  (void) udx;
+bool
+udx__timer_resolution_begin (void) {
+  return false;
 }
 
 void
-udx__platform_uninit (udx_t *udx) {
-  (void) udx;
+udx__timer_resolution_end (void) {
 }

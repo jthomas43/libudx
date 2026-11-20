@@ -72,22 +72,20 @@ udx__udp_set_dontfrag (uv_os_sock_t fd, bool is_ipv6) {
   return rc;
 }
 
-// timeBeginPeriod(1) may not be honored, e.g. for occluded or minimized
-// processes on windows 11, leaving timers coalesced to ~15.6 ms
+// timeBeginPeriod(1) may not be honored, e.g. for minimized windowed
+// processes on windows 11, leaving timers limited by the default timer
+// resolution (~15.6 ms). the check in advance_next_send_ts is strict, so the
+// credit can reach one packet interval beyond this.
 const uint64_t udx__pacing_max_credit_ms = 16;
 
-void
-udx__platform_init (udx_t *udx) {
-  (void) udx;
-
-  // the pacer relies on short timers. raise the system timer resolution to
-  // 1 ms so they are not coalesced to the default ~15.6 ms tick.
-  timeBeginPeriod(1);
+bool
+udx__timer_resolution_begin (void) {
+  // the pacer relies on short timers. ask for 1 ms timer resolution while
+  // a stream is pacing.
+  return timeBeginPeriod(1) == TIMERR_NOERROR;
 }
 
 void
-udx__platform_uninit (udx_t *udx) {
-  (void) udx;
-
+udx__timer_resolution_end (void) {
   timeEndPeriod(1);
 }

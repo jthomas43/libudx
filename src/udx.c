@@ -712,6 +712,7 @@ on_stream_data_write (uv_udp_send_t *send, int status) {
 static void
 advance_next_send_ts (udx_stream_t *stream, bool sent_packet) {
   uint64_t now_ms = uv_now(stream->udx->loop);
+  bool was_future = stream->next_send_ts > now_ms;
 
   if (sent_packet) {
     if (stream->next_send_ts + udx__pacing_max_credit_ms < now_ms) {
@@ -734,8 +735,50 @@ advance_next_send_ts (udx_stream_t *stream, bool sent_packet) {
   stream->next_send_ts_fraction = modf(stream->last_send_ts_fraction + inter_packet_spacing_ms, &whole);
   stream->next_send_ts = stream->last_send_ts + whole;
 
-  if (stream->next_send_ts > now_ms) {
-    uv_timer_start(&stream->pacing_timer, pacing_timer_timeout, stream->next_send_ts - now_ms, 0);
+  // a rate increase may move a pending deadline into the past. clamp it instead of creating catch-up credit
+  if (!sent_packet && was_future && stream->next_send_ts < now_ms) {
+    stream->next_send_ts = now_ms;
+    stream->next_send_ts_fraction = 0.0;
+  }
+  // the pacing timer is armed or stopped in pacer_after_send()
+}
+
+// discard stale credit unless the previous stop was pacing-limited; a future deadline is never moved back.
+// real timer debt stays bounded in advance_next_send_ts()
+static void
+pacer_resume (udx_stream_t *stream) {
+  uint64_t now = uv_now(stream->udx->loop);
+  if (!stream->pacing_wait && stream->next_send_ts < now) {
+    stream->next_send_ts = now;
+    stream->next_send_ts_fraction = 0.0;
+    stream->last_send_ts = now;
+    stream->last_send_ts_fraction = 0.0;
+  }
+}
+
+// classify why sending stopped; arm pacing only for queued work with the window open and a future deadline
+static void
+pacer_after_send (udx_stream_t *stream) {
+  // a partial packet is deferred to the prepare phase so later writes in this loop iteration can fill it;
+  // on_pending_packet_prepare() calls this again once it is sent
+  if (stream->pkt_header_flag & UDX_HEADER_DATA) {
+    uv_timer_stop(&stream->pacing_timer);
+    return;
+  }
+
+  uint64_t now = uv_now(stream->udx->loop);
+  bool rtx = stream->retransmit_queue.len > 0;
+  bool work = rtx || stream->write_queue.len > 0;
+  // retransmissions are cwnd-limited; new data also respects the peer's receive window
+  bool window_full = rtx ? stream->inflight_queue.len >= stream->cwnd : stream->inflight_queue.len >= send_window_in_packets(stream);
+
+  if (work && !window_full && stream->next_send_ts > now) {
+    stream->pacing_wait = true;
+    uv_timer_start(&stream->pacing_timer, pacing_timer_timeout, stream->next_send_ts - now, 0);
+  } else {
+    stream->pacing_wait = false;
+    uv_timer_stop(&stream->pacing_timer);
+    pacer_resume(stream);
   }
 }
 
@@ -820,6 +863,8 @@ _send_packet (udx_stream_t *stream, udx_packet_t *pkt, bool is_retransmit) {
   udx->packets_tx++;
   udx->bytes_tx += pkt->size;
 
+  // every data packet is sent here, including the deferred partial packet and TLP; drop stale credit before advancing
+  pacer_resume(stream);
   advance_next_send_ts(stream, true);
 }
 
@@ -908,6 +953,8 @@ void
 on_pending_packet_prepare (uv_prepare_t *check) {
   udx_stream_t *stream = container_of(check, udx_stream_t, pending_packet_prepare);
   _send_new_packet(stream, false); // tlp always false here, as we never delay tlp packets
+  // classify pacing after the deferred partial packet has actually been sent
+  pacer_after_send(stream);
 }
 
 // called by send_packets and when a tlp or zwp is needed.
@@ -1004,6 +1051,7 @@ retransmit_packet (udx_stream_t *stream, udx_packet_t *pkt) {
 static void
 send_packets (udx_stream_t *stream) {
   assert((stream->status & UDX_STREAM_DEAD) == 0);
+  pacer_resume(stream);
 
   while (stream->retransmit_queue.len > 0 && stream_may_send(stream, true)) {
     udx_packet_t *pkt = udx__queue_data(udx__queue_peek(&stream->retransmit_queue), udx_packet_t, queue);
@@ -1015,6 +1063,8 @@ send_packets (udx_stream_t *stream) {
   while (send_new_packet(stream, false)) {
     ;
   }
+
+  pacer_after_send(stream);
 }
 
 // if not 'from_now' then we use the saved rto in `stream->next_rto_ts`
@@ -1076,6 +1126,8 @@ udx_tlp_timeout (uv_timer_t *timer) {
     stream->tlp_permitted = false;
   }
 
+  // tlp sends bypass send_packets(), so pacing state must be finalized here
+  pacer_after_send(stream);
   rearm_rto(stream, true);
 }
 
